@@ -599,7 +599,7 @@ app.post('/payment-sheet-subscription', async (_, res) => {
   );
   const subscription = await stripe.subscriptions.create({
     customer: customer.id,
-    items: [{ price: 'price_1L3hcFLu5o3P18Zp9GDQEnqe' }],
+    items: [{ price: 'price_1NaWhGKYtDf8GmtPsZJ5ztIE' }],
     trial_period_days: 3,
   });
 
