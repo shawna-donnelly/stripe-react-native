@@ -11,6 +11,7 @@
     "start:server": "yarn build:server & nodemon ./dist"
   },
   "dependencies": {
+    "@okta/okta-sdk-nodejs": "^7.0.1",
     "@react-native-masked-view/masked-view": "^0.2.6",
     "@react-native-picker/picker": "^2.4.1",
     "@react-navigation/native": "^6.0.10",

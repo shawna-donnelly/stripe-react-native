@@ -8,11 +8,14 @@ import bodyParser from 'body-parser';
 import express from 'express';
 
 import Stripe from 'stripe';
+import Okta, { okta } from '@okta/okta-sdk-nodejs';
+
 import { generateResponse } from './utils';
 
 const stripePublishableKey = process.env.STRIPE_PUBLISHABLE_KEY || '';
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY || '';
 const stripeWebhookSecret = process.env.STRIPE_WEBHOOK_SECRET || '';
+const oktaApiToken = process.env.OKTA_API_KEY || '';
 
 const app = express();
 
@@ -385,7 +388,10 @@ app.post(
   // Use body-parser to retrieve the raw body as a buffer.
   /* @ts-ignore */
   bodyParser.raw({ type: 'application/json' }),
-  (req: express.Request, res: express.Response): express.Response<any> => {
+  async (
+    req: express.Request,
+    res: express.Response
+  ): Promise<express.Response<any>> => {
     // Retrieve the event by verifying the signature using the raw body and secret.
     let event: Stripe.Event;
     const { secret_key } = getKeys();
@@ -401,6 +407,7 @@ app.post(
         req.headers['stripe-signature'] || [],
         stripeWebhookSecret
       );
+      console.log({ event }, event.data);
     } catch (err) {
       console.log(`⚠️  Webhook signature verification failed.`);
       return res.sendStatus(400);
@@ -440,6 +447,73 @@ app.post(
     if (eventType === 'setup_intent.created') {
       const setupIntent: Stripe.SetupIntent = data.object as Stripe.SetupIntent;
       console.log(`🔔  A new SetupIntent is created. ${setupIntent.id}`);
+    }
+
+    // Handle the event
+    switch (event.type) {
+      case 'setup_intent.created':
+        const setupIntentCreated = event.data.object;
+        console.log({ setupIntentCreated });
+        // Then define and call a function to handle the event customer.subscription.created
+        break;
+      case 'customer.subscription.created':
+        const customerSubscriptionCreated = event.data.object;
+        console.log({ customerSubscriptionCreated });
+        // Then define and call a function to handle the event customer.subscription.created
+        break;
+      case 'customer.subscription.deleted':
+        const customerSubscriptionDeleted = event.data.object;
+        console.log({ customerSubscriptionDeleted });
+        // Then define and call a function to handle the event customer.subscription.deleted
+        break;
+      case 'customer.subscription.paused':
+        const customerSubscriptionPaused = event.data.object;
+        console.log({ customerSubscriptionPaused });
+        // Then define and call a function to handle the event customer.subscription.paused
+        break;
+      case 'customer.subscription.pending_update_applied':
+        const customerSubscriptionPendingUpdateApplied = event.data.object;
+        console.log({ customerSubscriptionPendingUpdateApplied });
+        // Then define and call a function to handle the event customer.subscription.pending_update_applied
+        break;
+      case 'customer.subscription.pending_update_expired':
+        const customerSubscriptionPendingUpdateExpired = event.data.object;
+        console.log({ customerSubscriptionPendingUpdateExpired });
+        // Then define and call a function to handle the event customer.subscription.pending_update_expired
+        break;
+      case 'customer.subscription.trial_will_end':
+        const customerSubscriptionTrialWillEnd = event.data.object;
+        console.log({ customerSubscriptionTrialWillEnd });
+        // Then define and call a function to handle the event customer.subscription.trial_will_end
+        break;
+      case 'customer.subscription.updated':
+        const customerSubscriptionUpdated = event.data.object;
+        console.log({ customerSubscriptionUpdated });
+        if (customerSubscriptionUpdated.status === 'active') {
+          const oktaClient = new Okta.Client({
+            orgUrl: 'https://dev-02732928.okta.com',
+            token: oktaApiToken, // Obtained from Developer Dashboard
+          });
+
+          const user = await oktaClient.userApi.listUsers({
+            search: `profile.stripeCustomerId eq ${customerSubscriptionUpdated.customer}`,
+          });
+
+          console.log('USER RESPONSE');
+          console.log(user);
+
+          // await oktaClient.groupApi
+          //   .assignUserToGroup({
+          //     groupId: '00gaovc7f4wTkciaW5d7',
+          //     userId: user?.[0].id,
+          //   })
+          //   .catch((e) => console.log('error adding to group' + e.message));
+        }
+        // Then define and call a function to handle the event customer.subscription.updated
+        break;
+      // ... handle other event types
+      default:
+        console.log(`Unhandled event type ${event.type}`);
     }
 
     return res.sendStatus(200);
@@ -583,6 +657,7 @@ app.post('/payment-sheet-subscription', async (_, res) => {
   });
 
   const customers = await stripe.customers.list();
+  console.log({ customers });
 
   // Here, we're getting latest customer only for example purposes.
   const customer = customers.data[0];
@@ -593,15 +668,21 @@ app.post('/payment-sheet-subscription', async (_, res) => {
     });
   }
 
+  console.log({ customer });
+
   const ephemeralKey = await stripe.ephemeralKeys.create(
     { customer: customer.id },
     { apiVersion: '2022-11-15' }
   );
+
+  console.log({ ephemeralKey });
+
   const subscription = await stripe.subscriptions.create({
     customer: customer.id,
     items: [{ price: 'price_1NaWhGKYtDf8GmtPsZJ5ztIE' }],
-    trial_period_days: 3,
   });
+
+  console.log({ subscription });
 
   if (typeof subscription.pending_setup_intent === 'string') {
     const setupIntent = await stripe.setupIntents.retrieve(
@@ -613,6 +694,9 @@ app.post('/payment-sheet-subscription', async (_, res) => {
       ephemeralKey: ephemeralKey.secret,
       customer: customer.id,
     });
+  } else if (subscription.pending_setup_intent === null) {
+    console.log('No setup intent');
+    res.status(200).send();
   } else {
     throw new Error(
       'Expected response type string, but received: ' +
@@ -710,6 +794,87 @@ app.post('/payment-intent-for-payment-sheet', async (req, res) => {
   } catch (e) {
     return res.send({ error: e });
   }
+});
+
+app.post('/initialize-payment-sheet', async (req, res) => {
+  const { secret_key } = getKeys();
+  const { email, name, username, userid } = req.body;
+
+  const oktaClient = new Okta.Client({
+    orgUrl: 'https://dev-02732928.okta.com/',
+    token: oktaApiToken, // Obtained from Developer Dashboard
+  });
+
+  let user = await oktaClient.userApi.getUser({
+    userId: userid,
+  });
+
+  console.log('User: ', user);
+
+  const stripe = new Stripe(secret_key as string, {
+    apiVersion: '2022-11-15',
+    typescript: true,
+  });
+
+  // Create customer
+  // TODO: Add Search Customer - stripe.customers.search({ query: username});
+
+  const customer = await stripe.customers.create({
+    email: username,
+    name,
+  });
+
+  user = await oktaClient.userApi.updateUser({
+    userId: userid,
+    user: {
+      profile: {
+        stripeCustomerId: customer.id,
+      },
+    },
+  });
+
+  const ephemeralKey = await stripe.ephemeralKeys.create(
+    { customer: customer.id },
+    { apiVersion: '2022-11-15' }
+  );
+
+  console.log({ ephemeralKey });
+
+  console.log('customerId', user.profile?.stripeCustomerId);
+  res.send({
+    ephemeralKey,
+    customer: customer.id,
+  });
+});
+
+app.post('/create-subscription', async (req, res) => {
+  const { customerId } = req.body;
+  const { secret_key } = getKeys();
+
+  const priceId = 'price_1NaWhGKYtDf8GmtPsZJ5ztIE';
+
+  const oktaClient = new Okta.Client({
+    orgUrl: 'https://dev-02732928.okta.com/',
+    token: oktaApiToken, // Obtained from Developer Dashboard
+  });
+
+  const stripe = new Stripe(secret_key as string, {
+    apiVersion: '2022-11-15',
+    typescript: true,
+  });
+
+  const subscription = await stripe.subscriptions.create({
+    customer: customerId,
+    items: [{ price: priceId }],
+    payment_behavior: 'default_incomplete', // This prevents crashing with no default-payment-method
+    payment_settings: { save_default_payment_method: 'on_subscription' },
+    expand: ['latest_invoice.payment_intent'],
+  });
+
+  res.send({
+    subscriptionId: subscription.id,
+    clientSecret: subscription.latest_invoice.payment_intent.client_secret,
+  });
 });
 
 app.listen(4242, (): void =>
